@@ -1,6 +1,8 @@
 package main
 
 import (
+	"flag"
+	"fmt"
 	"log"
 	"log/slog"
 	"net"
@@ -14,12 +16,20 @@ type Config struct {
 	Port string
 }
 
+type Message struct {
+	cmd Command
+	peer *Peer
+}
 type Server struct {
 	Config
 	peers map[*Peer]bool
 	ln net.Listener
 	addPeerCh chan *Peer
 	quitCh chan struct{}
+	msgChan chan Message
+	delPeerCh chan *Peer
+
+	kv *KV
 }
 
 func NewServer(cfg Config) *Server {
@@ -32,6 +42,9 @@ func NewServer(cfg Config) *Server {
 		peers: make(map[*Peer]bool),
 		addPeerCh: make(chan *Peer),
 		quitCh: make(chan struct{}),
+		msgChan: make(chan Message),
+		delPeerCh: make(chan *Peer),
+		kv: NewKV(),
 	}
 }
 
@@ -45,7 +58,7 @@ func (s *Server) Start() error {
 
 	go s.loop()
 
-	slog.Info("Server started", "port", s.Port)
+	slog.Info("goredis server running", "port", s.Port)
 
 	return s.acceptLoop()
 }
@@ -54,9 +67,17 @@ func (s *Server) loop() {
 	for {
 		select {
 			case peer := <-s.addPeerCh:
+				slog.Info("peer connected", "remoteAddr", peer.conn.RemoteAddr())
 				s.peers[peer] = true
 			case <-s.quitCh:
 				return
+			case rawMsg := <-s.msgChan:
+				if err := s.handleRawMsg(rawMsg); err != nil {
+					slog.Error("handle raw message error", "error", err)
+				}
+			case peer := <- s.delPeerCh:
+				slog.Info("peer disconnected", "remoteAddr", peer.conn.RemoteAddr())
+				delete(s.peers, peer)
 		}
 	}
 }
@@ -72,15 +93,37 @@ func (s *Server) acceptLoop() error {
 	}
 }
 
-
 func (s *Server) handleConn(conn net.Conn) {
-	peer := NewPeer(conn)
+	peer := NewPeer(conn, s.msgChan, s.delPeerCh)
 	s.addPeerCh <- peer
-	slog.Info("new peer connected", "addr", conn.RemoteAddr())
-	peer.readLoop()
+	if err := peer.readLoop(); err != nil {
+		slog.Error("peer read error", "err", err, "remote_addr", conn.RemoteAddr())
+	}
+}
+
+func (s *Server) handleRawMsg(msg Message) error {
+	switch v := msg.cmd.(type) {
+	case SetCommand:
+		return s.kv.Set(v.key, v.val)
+	case GetCommand:
+		val, ok := s.kv.Get(v.key)
+		if !ok {
+			return fmt.Errorf("key not found")
+		}
+		_, err := msg.peer.Send(val)
+		if err != nil {
+			slog.Error("peer send error", "err", err)
+		}
+	}
+
+	return nil
 }
 
 func main() {
-	server := NewServer(Config{})
+	listenAddr := flag.String("listenAddr", defaultPort, "listen address of the goredis server")
+	flag.Parse()
+	server := NewServer(Config{
+		Port: *listenAddr,
+	})
 	log.Fatal(server.Start())
 }
