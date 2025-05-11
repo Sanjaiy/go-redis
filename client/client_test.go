@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestNewClients(t *testing.T) {	
+func TestNewClients(t *testing.T) {
 	nClients := 10
 
 	var wg sync.WaitGroup

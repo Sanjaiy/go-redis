@@ -8,6 +8,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 )
 
 func TestServerWithClient(t *testing.T) {
@@ -53,5 +55,44 @@ func TestServerWithClient(t *testing.T) {
 
 	if len(server.peers) != 0 {
 		t.Fatalf("expected 0 peers but got %d", len(server.peers))
+	}
+}
+
+func TestRespWriteMap(t *testing.T) {
+	in := map[string]string{
+		"first": "1",
+		"second": "2",
+	}
+
+	out := respWriteMap(in)
+	fmt.Println(out)
+}
+
+
+func TestOfficialRedisClient(t *testing.T) {
+	server := NewServer(Config{})
+	go func(){
+		log.Fatal(server.Start())
+	}()
+
+	time.Sleep(1 * time.Second)
+
+	rdb := redis.NewClient(&redis.Options{
+        Addr:     "localhost:5001",
+        Password: "",
+        DB:       0,
+    })
+
+	if err := rdb.Set(context.Background(), "key", "value", 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	v, err := rdb.Get(context.Background(), "key").Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	
+	if v != "value" {
+		t.Fatalf("expected %s but got %s", "value", v)
 	}
 }

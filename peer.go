@@ -36,35 +36,39 @@ func (p *Peer) readLoop() error {
 			log.Fatal(err)
 		}
 
+		var cmd Command
 		if v.Type() == resp.Array {
-			for _, value := range v.Array() {
-				switch value.String() {
+			rawCMD := v.Array()[0]
+			switch rawCMD.String() {
 				case CommandSET:
 					if len(v.Array()) != 3 {
 						return fmt.Errorf("invalid number of variables for SET command")
 					}
-					cmd := SetCommand{
+					cmd = SetCommand{
 						key: v.Array()[1].Bytes(),
 						val: v.Array()[2].Bytes(),
-					}
-
-					p.msgChan <- Message{
-						cmd: cmd,
-						peer: p,
 					}
 				case CommandGET:
 					if len(v.Array()) != 2 {
 						return fmt.Errorf("invalid number of variables for GET command")
 					}
-					cmd := GetCommand{
+					cmd = GetCommand{
 						key: v.Array()[1].Bytes(),
 					}
-
-					p.msgChan <- Message{
-						cmd: cmd,
-						peer: p,
+				case CommandHELLO:
+					cmd = HelloCommand{
+						value: v.Array()[1].String(),
 					}
-				}
+				case CommandClient:
+					cmd = ClientCommand{
+						value: v.Array()[1].String(),
+					}
+				default:
+					fmt.Printf("got unknown command => %+v\n", rawCMD)
+			}
+			p.msgChan <- Message{
+				cmd: cmd,
+				peer: p,
 			}
 		}
 	}
